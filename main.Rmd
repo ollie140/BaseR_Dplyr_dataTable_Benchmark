@@ -17,16 +17,173 @@ This is an R Markdown document. Markdown is a simple formatting syntax for autho
 
 When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
 
-```{r cars}
-summary(cars)
+```{r libraries}
+library(bench)      # assess speed and memory
+library(data.table) # data.table for all of its stuff
+library(dplyr)      # compare it to data.table
+library(lobstr)     # assess the process of R functions
+library(tidyr)
 ```
+
+```{r visualization libraries}
+library(ggplot2)
+library(cowplot)
+theme_set(theme_light())
+```
+
 
 ## Including Plots
 
 You can also embed plots, for example:
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r data generation}
+set.seed(84322)
+d <- data.table(
+  grp = sample(c(1,2,3), size = 1e6, replace = TRUE) %>% factor,
+  x = rnorm(1e6),
+  y = runif(1e6)
+)
+d
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## base R
+
+```{r base R functions}
+
+#add a variable
+base_mutate <- function(data){
+  data$z <- rnorm(1e6)
+  data
+}
+
+#filter rows
+base_filter <- function(data){
+  data[data$grp == 1, ]
+}
+
+#summarize data by group
+base_summarize <- function(data){
+  tapply(data$x, data$grp, mean)
+}
+```
+
+## dplyr
+
+```{r dplyr functions}
+
+#add a variable
+dplyr_mutate <- function(data){
+  mutate(data, z = rnorm(1e6))
+}
+
+#filter rows
+dplyr_filter <- function(data){
+  filter(data, grp == 1)
+}
+
+#summarize data by group
+dplyr_summarize <- function(data){
+  summarize(group_by(data, grp), mean(x))
+}
+```
+
+## data.table
+
+```{r data.table}
+
+#add a variable
+dt_mutate <- function(data){
+  data[, z := rnorm(1e6)]
+}
+
+#filter rows
+dt_filter <- function(data){
+  data[grp == 1]
+}
+
+#summarize data by group
+dt_summarize <- function(data){
+  data[, mean(x), by = "grp"]
+}
+```
+
+## Data copy no sorting
+
+```{r create different }
+df <- copy(d) %>% as.data.frame()
+tbl <- copy(d) %>% as_tibble()
+dt <- copy(d)
+```
+
+## Data copy with sorting
+
+```{r}
+df <- copy(d) %>% as.data.frame()
+tbl <- copy(d) %>% as_tibble()
+dt <- copy(d)
+setkey(dt, grp)
+```
+
+## Benchmarking
+
+```{r Benchmarking}
+
+# Adding a variable
+bench_base_m  <- bench::mark(base_mutate(df), iterations = 50)
+bench_dplyr_m <- bench::mark(dplyr_mutate(tbl), iterations = 50)
+bench_dt_m    <- bench::mark(dt_mutate(dt), iterations = 50)
+
+# Filtering rows
+bench_base_f  <- bench::mark(base_filter(df), iterations = 50)
+bench_dplyr_f <- bench::mark(dplyr_filter(tbl), iterations = 50)
+bench_dt_f    <- bench::mark(dt_filter(dt), iterations = 50)
+
+# Summarizing by group
+bench_base_s  <- bench::mark(base_summarize(df), iterations = 50)
+bench_dplyr_s <- bench::mark(dplyr_summarize(tbl), iterations = 50)
+bench_dt_s    <- bench::mark(dt_summarize(dt), iterations = 50)
+```
+
+## Plotting results
+
+### Autoplot test
+
+```{r Autoplots}
+p1 <- autoplot(bench_base_m, type = "boxplot")
+p2 <- autoplot(bench_dplyr_m, type = "boxplot")
+p3 <- autoplot(bench_dt_m, type = "boxplot")
+
+plot_grid(p1, p2, p3, labels = c('Base R', 'dplyr', 'data.table'), label_size = 12, align = "hv", axis = "tblr")
+```
+
+### ggplots
+
+```{r Construct dataframes from benchmarks}
+construct_dataframe <- function(base, dplyr, datatable){
+  
+data <- data.frame(
+  "base" = base$time,
+  "dplyr" = dplyr$time,
+  "datatable" = datatable$time
+)
+names(data)[1] <- "base"
+names(data)[2] <- "dplyr"
+names(data)[3] <- "datatable"
+
+data <- as_tibble(data) %>%
+  pivot_longer(c(base, dplyr, datatable))
+}
+
+mutate_bench_test <- construct_dataframe(bench_base_m, bench_dplyr_m, bench_dt_m)
+filter_bench_test <- construct_dataframe(bench_base_f, bench_dplyr_f, bench_dt_f)
+groupby_bench_test <- construct_dataframe(bench_base_s, bench_dplyr_s, bench_dt_s)
+```
+
+
+```{r mutate comparison}
+ggplot() + 
+  geom_boxplot(data = mutate_bench_test, aes(mutate_bench_test$value)) +
+  coord_flip() +
+  facet_wrap(facets = ~name)
+```
+
